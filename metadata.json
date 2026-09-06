@@ -1,0 +1,6 @@
+{
+  "name": "Manga Reader App",
+  "description": "Mobile-first manga reader application architecture",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
