@@ -1,8 +1,26 @@
+# Dependencias
 node_modules/
-build/
+
+# Expo / React Native
+.expo/
 dist/
-coverage/
+web-build/
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+
+# macOS
 .DS_Store
-*.log
-.env*
-!.env.example
+
+# Variables de Entorno (¡Nunca subir secretos a GitHub!)
+.env
+.env.local
+.env.*.local
+
+# Logs y Cachés
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.eslintcache
