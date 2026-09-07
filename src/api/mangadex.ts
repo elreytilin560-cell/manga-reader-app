@@ -1,120 +1,62 @@
 import axios from 'axios';
 import { Manga } from '../types/manga';
-import { Chapter } from '../types/chapter';
 
 const BASE_URL = 'https://api.mangadex.org';
-const UPLOADS_URL = 'https://uploads.mangadex.org';
 
-const api = axios.create({
-  baseURL: BASE_URL,
-});
-
-export const getPopularManga = async (): Promise<Manga[]> => {
+export const getPopularManga = async (limit: number = 20, offset: number = 0): Promise<Manga[]> => {
   try {
-    // includes[]=cover_art is MANDATORY to get the cover file name in relationships
-    const response = await api.get('/manga', {
+    const response = await axios.get(`${BASE_URL}/manga`, {
       params: {
-        'includes[]': 'cover_art',
+        limit,
+        offset,
+        'includes[]': ['cover_art'],
         'order[followedCount]': 'desc',
-        limit: 20,
-        hasAvailableChapters: 'true',
+        'contentRating[]': ['safe', 'suggestive'],
       },
     });
 
-    return mapMangaDexResponse(response.data.data);
+    return parseMangaResponse(response.data.data);
   } catch (error) {
     console.error('Error fetching popular manga:', error);
     throw error;
   }
 };
 
-export const searchManga = async (query: string): Promise<Manga[]> => {
+export const searchManga = async (title: string, limit: number = 20, offset: number = 0): Promise<Manga[]> => {
   try {
-    const response = await api.get('/manga', {
+    const response = await axios.get(`${BASE_URL}/manga`, {
       params: {
-        title: query,
-        'includes[]': 'cover_art',
-        limit: 20,
-        hasAvailableChapters: 'true',
+        title,
+        limit,
+        offset,
+        'includes[]': ['cover_art'],
+        'contentRating[]': ['safe', 'suggestive'],
       },
     });
-    return mapMangaDexResponse(response.data.data);
+
+    return parseMangaResponse(response.data.data);
   } catch (error) {
     console.error('Error searching manga:', error);
     throw error;
   }
 };
 
-// Utility function to map and clean the response
-const mapMangaDexResponse = (data: any[]): Manga[] => {
+// Función auxiliar para mapear la respuesta de MangaDex a nuestro tipo Manga
+const parseMangaResponse = (data: any[]): Manga[] => {
   return data.map((item) => {
-    // 1. Get Title (Fallback to the first available language if English is missing)
-    const titleObj = item.attributes.title;
-    const title = titleObj.en || titleObj['es-la'] || titleObj.es || Object.values(titleObj)[0] || 'Desconocido';
-
-    // 2. Extract Cover File Name from relationships
-    const coverRel = item.relationships.find((rel: any) => rel.type === 'cover_art');
-    const coverFileName = coverRel?.attributes?.fileName;
-
-    // 3. Build Cover URL
-    const coverUrl = coverFileName 
-      ? `${UPLOADS_URL}/covers/${item.id}/${coverFileName}.256.jpg` // .256.jpg gets a smaller optimized version
-      : 'https://via.placeholder.com/256x384.png?text=Sin+Portada';
+    const title = item.attributes.title.en || Object.values(item.attributes.title)[0] || 'Sin título';
+    const coverRel = item.relationships.find((r: any) => r.type === 'cover_art');
+    const fileName = coverRel?.attributes?.fileName;
+    const coverUrl = fileName
+      ? `https://uploads.mangadex.org/covers/${item.id}/${fileName}.256.jpg`
+      : 'https://via.placeholder.com/256x360?text=No+Cover';
 
     return {
       id: item.id,
-      title: title as string,
+      title,
       coverUrl,
+      description: item.attributes.description?.en || 'Sin descripción disponible.',
+      status: item.attributes.status,
     };
   });
-};
-
-export const getMangaById = async (id: string): Promise<Manga> => {
-  try {
-    const response = await api.get(`/manga/${id}`, {
-      params: {
-        'includes[]': 'cover_art',
-      },
-    });
-    return mapMangaDexResponse([response.data.data])[0];
-  } catch (error) {
-    console.error('Error fetching manga details:', error);
-    throw error;
-  }
-};
-
-export const getMangaChapters = async (mangaId: string): Promise<Chapter[]> => {
-  try {
-    const response = await api.get(`/manga/${mangaId}/feed`, {
-      params: {
-        'translatedLanguage[]': ['es-la', 'es', 'en'], // Prioritizing Spanish and English
-        'order[chapter]': 'asc',
-        limit: 500,
-      },
-    });
-
-    return response.data.data.map((item: any) => ({
-      id: item.id,
-      chapterNumber: item.attributes.chapter || '0', // '0' for oneshots usually
-      title: item.attributes.title,
-      language: item.attributes.translatedLanguage,
-    }));
-  } catch (error) {
-    console.error('Error fetching manga chapters:', error);
-    throw error;
-  }
-};
-
-export const getChapterPages = async (chapterId: string): Promise<string[]> => {
-  try {
-    const response = await api.get(`/at-home/server/${chapterId}`);
-    const { baseUrl, chapter } = response.data;
-    const { hash, data } = chapter;
-
-    // Construct the high-quality URL for each page
-    return data.map((filename: string) => `${baseUrl}/data/${hash}/${filename}`);
-  } catch (error) {
-    console.error('Error fetching chapter pages:', error);
-    throw error;
-  }
 };

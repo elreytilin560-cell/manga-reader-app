@@ -1,161 +1,262 @@
-import { useEffect, useState } from 'react';
-import { useFavoriteStore } from '../store/useFavoriteStore';
-import { Manga } from '../types/manga';
-import { Link } from 'react-router-dom';
-import { Heart, Loader2, AlertCircle, Search, X } from 'lucide-react';
-import { cn } from '../utils/cn';
+import React, { useEffect, useState, useCallback } from 'react';
+import { 
+  View, 
+  Text, 
+  StyleSheet, 
+  FlatList, 
+  ActivityIndicator, 
+  TouchableOpacity,
+  Dimensions,
+  TextInput,
+  Keyboard
+} from 'react-native';
+import { Image } from 'expo-image';
+import { useNavigation } from '@react-navigation/native';
+import { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { Heart, Search, X } from 'lucide-react-native';
 import { getPopularManga, searchManga } from '../api/mangadex';
+import { Manga } from '../types/manga';
+import { useFavoriteStore } from '../store/useFavoriteStore';
+import { RootStackParamList } from '../../App';
+
+type ExploreNavigationProp = NativeStackNavigationProp<RootStackParamList, 'MainTabs'>;
+const numColumns = 3;
+const screenWidth = Dimensions.get('window').width;
+const itemWidth = (screenWidth - 32 - (10 * (numColumns - 1))) / numColumns;
+const PAGE_LIMIT = 20;
 
 export function ExploreScreen() {
+  const navigation = useNavigation<ExploreNavigationProp>();
   const { addFavorite, removeFavorite, isFavorite } = useFavoriteStore();
+  
   const [mangas, setMangas] = useState<Manga[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearchActive, setIsSearchActive] = useState(false);
 
-  useEffect(() => {
-    fetchMangas();
-  }, []);
+  // Estados de paginación
+  const [offset, setOffset] = useState(0);
+  const [isFetchingMore, setIsFetchingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
 
-  const fetchMangas = async () => {
+  // Carga inicial (reinicia offset)
+  const fetchInitialMangas = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
       setIsSearchActive(false);
-      const data = await getPopularManga();
+      setOffset(0);
+      setHasMore(true);
+
+      const data = await getPopularManga(PAGE_LIMIT, 0);
       setMangas(data);
+      if (data.length < PAGE_LIMIT) setHasMore(false);
     } catch (err) {
-      setError('Error al cargar los mangas. Verifica tu conexión.');
+      setError('Error al conectar con MangaDex. Verifica tu internet.');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchInitialMangas();
+  }, [fetchInitialMangas]);
+
+  // Búsqueda inicial (reinicia offset)
+  const handleSearch = async () => {
+    Keyboard.dismiss();
+    if (!searchQuery.trim()) {
+      fetchInitialMangas();
+      return;
+    }
+    
+    try {
+      setLoading(true);
+      setError(null);
+      setIsSearchActive(true);
+      setOffset(0);
+      setHasMore(true);
+
+      const data = await searchManga(searchQuery, PAGE_LIMIT, 0);
+      setMangas(data);
+      if (data.length < PAGE_LIMIT) setHasMore(false);
+    } catch (err) {
+      setError('Error al buscar mangas.');
     } finally {
       setLoading(false);
     }
   };
 
-  const handleSearch = async (e?: React.FormEvent) => {
-    e?.preventDefault();
-    if (!searchQuery.trim()) {
-      fetchMangas();
-      return;
-    }
+  // Carga de siguientes páginas (Concatena al arreglo existente)
+  const loadMoreMangas = async () => {
+    if (isFetchingMore || !hasMore || loading) return;
+
     try {
-      setLoading(true);
-      setError(null);
-      setIsSearchActive(true);
-      const data = await searchManga(searchQuery);
-      setMangas(data);
+      setIsFetchingMore(true);
+      const nextOffset = offset + PAGE_LIMIT;
+
+      const newMangaBatch = isSearchActive
+        ? await searchManga(searchQuery, PAGE_LIMIT, nextOffset)
+        : await getPopularManga(PAGE_LIMIT, nextOffset);
+
+      if (newMangaBatch.length < PAGE_LIMIT) {
+        setHasMore(false);
+      }
+
+      setMangas((prev) => [...prev, ...newMangaBatch]);
+      setOffset(nextOffset);
     } catch (err) {
-      setError('Error al buscar mangas. Verifica tu conexión.');
+      console.error('Error al cargar más mangas:', err);
     } finally {
-      setLoading(false);
+      setIsFetchingMore(false);
     }
   };
 
   const clearSearch = () => {
     setSearchQuery('');
-    fetchMangas();
+    Keyboard.dismiss();
+    fetchInitialMangas();
+  };
+
+  const renderItem = ({ item }: { item: Manga }) => {
+    const isFav = isFavorite(item.id);
+
+    return (
+      <TouchableOpacity 
+        style={styles.card}
+        activeOpacity={0.8}
+        onPress={() => navigation.navigate('MangaDetail', { manga: item })}
+      >
+        <View style={styles.imageContainer}>
+          <Image 
+            source={{ uri: item.coverUrl }} 
+            style={styles.cover} 
+            contentFit="cover"
+            transition={300}
+          />
+          <TouchableOpacity 
+            style={styles.favoriteBtn}
+            onPress={() => isFav ? removeFavorite(item.id) : addFavorite(item)}
+          >
+            <Heart size={20} color={isFav ? '#ef4444' : '#6b7280'} fill={isFav ? '#ef4444' : 'transparent'} />
+          </TouchableOpacity>
+        </View>
+        <Text style={styles.title} numberOfLines={2}>{item.title}</Text>
+      </TouchableOpacity>
+    );
+  };
+
+  const renderFooter = () => {
+    if (!isFetchingMore) return null;
+    return (
+      <View style={styles.footerLoader}>
+        <ActivityIndicator size="small" color="#2563eb" />
+      </View>
+    );
   };
 
   const renderContent = () => {
-    if (loading) {
+    if (loading && mangas.length === 0) {
       return (
-        <div className="flex flex-col items-center justify-center h-full min-h-[400px] text-gray-500">
-          <Loader2 className="w-8 h-8 animate-spin mb-4 text-blue-600" />
-          <p className="font-medium">Cargando catálogo...</p>
-        </div>
+        <View style={styles.centerContainer}>
+          <ActivityIndicator size="large" color="#2563eb" />
+          <Text style={styles.loadingText}>Cargando catálogo...</Text>
+        </View>
       );
     }
 
-    if (error) {
+    if (error && mangas.length === 0) {
       return (
-        <div className="flex flex-col items-center justify-center h-full min-h-[400px] text-red-500 p-4 text-center">
-          <AlertCircle className="w-10 h-10 mb-4" />
-          <p className="font-medium mb-4">{error}</p>
-          <button 
-            onClick={isSearchActive ? () => handleSearch() : fetchMangas}
-            className="px-6 py-2 bg-gray-100 text-gray-800 rounded-full hover:bg-gray-200 transition-colors font-medium"
-          >
-            Reintentar
-          </button>
-        </div>
+        <View style={styles.centerContainer}>
+          <Text style={styles.errorText}>{error}</Text>
+          <TouchableOpacity style={styles.retryBtn} onPress={isSearchActive ? handleSearch : fetchInitialMangas}>
+            <Text style={styles.retryText}>Reintentar</Text>
+          </TouchableOpacity>
+        </View>
       );
     }
 
     if (mangas.length === 0 && isSearchActive) {
       return (
-        <div className="flex flex-col items-center justify-center h-full min-h-[300px] text-gray-500 text-center px-4">
-          <Search className="w-12 h-12 mb-4 text-gray-300" />
-          <p className="font-medium text-lg text-gray-800">No se encontraron mangas</p>
-          <p className="text-sm mt-1">Intenta con otros términos de búsqueda.</p>
-        </div>
+        <View style={styles.centerContainer}>
+          <Search size={48} color="#d1d5db" />
+          <Text style={styles.emptySearchText}>No se encontraron mangas</Text>
+        </View>
       );
     }
 
     return (
-      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4 mt-6">
-        {mangas.map((manga) => {
-          const favorite = isFavorite(manga.id);
-          return (
-            <div key={manga.id} className="relative flex flex-col group">
-              <Link to={`/manga/${manga.id}`} className="aspect-[2/3] bg-gray-200 rounded-lg mb-2 overflow-hidden relative shadow-sm group-hover:shadow-md transition-shadow">
-                <img 
-                  src={manga.coverUrl} 
-                  alt={manga.title} 
-                  loading="lazy"
-                  className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" 
-                />
-              </Link>
-              <button 
-                onClick={() => favorite ? removeFavorite(manga.id) : addFavorite(manga)}
-                className="absolute top-2 right-2 p-2 bg-white/90 backdrop-blur-sm rounded-full shadow-sm hover:scale-110 active:scale-95 transition-all z-10"
-              >
-                <Heart className={cn("w-5 h-5 transition-colors", favorite ? 'fill-red-500 text-red-500' : 'text-gray-500')} />
-              </button>
-              <span className="text-sm font-semibold text-gray-800 line-clamp-2 px-1">{manga.title}</span>
-            </div>
-          );
-        })}
-      </div>
+      <FlatList
+        data={mangas}
+        keyExtractor={(item, index) => `${item.id}-${index}`}
+        renderItem={renderItem}
+        numColumns={numColumns}
+        contentContainerStyle={styles.listContainer}
+        columnWrapperStyle={styles.columnWrapper}
+        refreshing={loading}
+        onRefresh={isSearchActive ? handleSearch : fetchInitialMangas}
+        showsVerticalScrollIndicator={false}
+        
+        // Propiedades de Paginación Infinita
+        onEndReached={loadMoreMangas}
+        onEndReachedThreshold={0.5}
+        ListFooterComponent={renderFooter}
+      />
     );
   };
 
   return (
-    <div className="p-4 max-w-2xl mx-auto w-full flex flex-col min-h-screen">
-      <div className="mt-4 mb-2">
-        <h1 className="text-3xl font-bold text-gray-900 mb-6">Explorar</h1>
-        
-        <form onSubmit={handleSearch} className="relative w-full">
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
+    <View style={styles.container}>
+      <View style={styles.header}>
+        <Text style={styles.headerTitle}>Explorar</Text>
+        <View style={styles.searchContainer}>
+          <Search color="#9ca3af" size={20} style={styles.searchIcon} />
+          <TextInput
+            style={styles.searchInput}
             placeholder="Buscar mangas..."
-            className="w-full bg-white border border-gray-200 rounded-2xl py-3 pl-12 pr-12 text-gray-800 placeholder-gray-400 focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 transition-all shadow-sm"
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            onSubmitEditing={handleSearch}
+            returnKeyType="search"
+            placeholderTextColor="#9ca3af"
           />
-          <button type="submit" className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 hover:text-blue-500 transition-colors">
-            <Search className="w-5 h-5" />
-          </button>
-          
-          {searchQuery && (
-            <button 
-              type="button" 
-              onClick={clearSearch}
-              className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-700 transition-colors bg-gray-100 rounded-full p-1"
-            >
-              <X className="w-3.5 h-3.5" />
-            </button>
+          {searchQuery.length > 0 && (
+            <TouchableOpacity onPress={clearSearch} style={styles.clearBtn}>
+              <X color="#6b7280" size={16} />
+            </TouchableOpacity>
           )}
-        </form>
-        
-        {isSearchActive && !loading && (
-          <p className="text-sm text-gray-500 mt-4 px-1">
-            Resultados para "<span className="font-medium text-gray-800">{searchQuery}</span>"
-          </p>
-        )}
-      </div>
+        </View>
+      </View>
 
       {renderContent()}
-    </div>
+    </View>
   );
 }
 
+const styles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: '#f9fafb' },
+  header: { paddingHorizontal: 16, paddingTop: 60, paddingBottom: 16, backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#f3f4f6' },
+  headerTitle: { fontSize: 28, fontWeight: 'bold', color: '#111827', marginBottom: 16 },
+  searchContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#f3f4f6', borderRadius: 16, paddingHorizontal: 12, height: 48 },
+  searchIcon: { marginRight: 8 },
+  searchInput: { flex: 1, fontSize: 16, color: '#1f2937' },
+  clearBtn: { padding: 4, backgroundColor: '#e5e7eb', borderRadius: 12 },
+  
+  listContainer: { padding: 16, paddingBottom: 100 },
+  columnWrapper: { gap: 10, marginBottom: 16 },
+  card: { width: itemWidth },
+  imageContainer: { width: '100%', aspectRatio: 2/3, backgroundColor: '#e5e7eb', borderRadius: 8, overflow: 'hidden', marginBottom: 8 },
+  cover: { flex: 1, width: '100%', height: '100%' },
+  favoriteBtn: { position: 'absolute', top: 8, right: 8, backgroundColor: 'rgba(255,255,255,0.9)', borderRadius: 20, padding: 6, zIndex: 10 },
+  title: { fontSize: 13, fontWeight: '600', color: '#1f2937', paddingHorizontal: 2 },
+  
+  centerContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 },
+  loadingText: { marginTop: 12, color: '#6b7280', fontSize: 16 },
+  errorText: { color: '#ef4444', fontSize: 16, textAlign: 'center', marginBottom: 16 },
+  retryBtn: { backgroundColor: '#f3f4f6', paddingHorizontal: 24, paddingVertical: 12, borderRadius: 24 },
+  retryText: { color: '#1f2937', fontWeight: '600' },
+  emptySearchText: { marginTop: 16, fontSize: 18, fontWeight: '600', color: '#4b5563' },
+  footerLoader: { paddingVertical: 20, alignItems: 'center' },
+});
